@@ -58,7 +58,7 @@ Longer timespans mean more interactions are processed and the training time is r
 Longer timespan leads to less frequent model updates. 
 '''
 timespan = timestamp_sequence[-1] - timestamp_sequence[0]
-tbatch_timespan = timespan / 500 
+tbatch_timespan = timespan / 50000 
 
 # INITIALIZE MODEL AND PARAMETERS
 model = JODIE(args, num_features, num_users, num_items).cuda()
@@ -74,7 +74,8 @@ model.initial_item_embedding = initial_item_embedding
 
 user_embeddings = initial_user_embedding.repeat(num_users, 1) # initialize all users to the same embedding 
 item_embeddings = initial_item_embedding.repeat(num_items, 1) # initialize all items to the same embedding
-item_embedding_static = Variable(torch.eye(num_items).cuda()) # one-hot vectors for static embeddings
+
+item_embedding_static = Variable(torch.eye(num_items).cuda()) # one-hot vectors for static embeddings 
 user_embedding_static = Variable(torch.eye(num_users).cuda()) # one-hot vectors for static embeddings 
 
 # INITIALIZE MODEL
@@ -134,7 +135,6 @@ with trange(args.epochs) as progress_bar1:
                 # AFTER ALL INTERACTIONS IN THE TIMESPAN ARE CONVERTED TO T-BATCHES, FORWARD PASS TO CREATE EMBEDDING TRAJECTORIES AND CALCULATE PREDICTION LOSS
                 if timestamp - tbatch_start_time > tbatch_timespan:
                     tbatch_start_time = timestamp # RESET START TIME FOR THE NEXT TBATCHES
-
                     # ITERATE OVER ALL T-BATCHES
                     with trange(len(lib.current_tbatches_user)) as progress_bar3:
                         for i in progress_bar3:
@@ -152,16 +152,18 @@ with trange(args.epochs) as progress_bar1:
                             tbatch_itemids_previous = torch.LongTensor(lib.current_tbatches_previous_item[i]).cuda()
                             item_embedding_previous = item_embeddings[tbatch_itemids_previous,:]
 
-                            # PROJECT USER EMBEDDING TO CURRENT TIME
-                            user_embedding_input = user_embeddings[tbatch_userids,:]
+                            # PROJECT USER EMBEDDING TO CURRENT TIME    U(t)
+                            user_embedding_input = user_embeddings[tbatch_userids,:]  # 认为是 之前的 u(t) 要把它映射到 u(t+delta)
+                            ## user_projected_embedding : u(t+delta)
                             user_projected_embedding = model.forward(user_embedding_input, item_embedding_previous, timediffs=user_timediffs_tensor, features=feature_tensor, select='project')
+                            ## previous 都是指 t 
                             user_item_embedding = torch.cat([user_projected_embedding, item_embedding_previous, item_embedding_static[tbatch_itemids_previous,:], user_embedding_static[tbatch_userids,:]], dim=1)
 
                             # PREDICT NEXT ITEM EMBEDDING                            
                             predicted_item_embedding = model.predict_item_embedding(user_item_embedding)
 
-                            # CALCULATE PREDICTION LOSS
-                            item_embedding_input = item_embeddings[tbatch_itemids,:]
+                            # CALCULATE PREDICTION LOSS for every batch
+                            item_embedding_input = item_embeddings[tbatch_itemids,:]  # i(t+delta) 真值，但是还没有经过update
                             loss += MSELoss(predicted_item_embedding, torch.cat([item_embedding_input, item_embedding_static[tbatch_itemids,:]], dim=1).detach())
 
                             # UPDATE DYNAMIC EMBEDDINGS AFTER INTERACTION
